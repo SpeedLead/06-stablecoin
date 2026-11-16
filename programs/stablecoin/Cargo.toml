@@ -21,8 +21,8 @@ custom-panic = []
 
 
 [dependencies]
-anchor-lang = { version = "1.0.0", features = ["init-if-needed"] }
-anchor-spl = { version = "1.0.0", features = ["token_2022", "associated_token"] }
+anchor-lang = { version = "=1.0.0", features = ["init-if-needed"] }
+anchor-spl = { version = "=1.0.0", features = ["token_2022", "associated_token"] }
 
 # Pin base64ct to avoid edition2024 requirement
 base64ct = ">=1.0.0, <1.8.0"
@@ -31,7 +31,7 @@ base64ct = ">=1.0.0, <1.8.0"
 [dev-dependencies]
 anchor-litesvm = "0.4.0"
 litesvm-utils = "0.4.0"
-anchor-lang = "1.0.0"
+anchor-lang = "=1.0.0"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }

@@ -56,7 +56,7 @@
         {
           "name": "mint",
           "docs": [
-            "The stablecoin mint"
+            "The stablecoin mint (Token-2022)"
           ],
           "writable": true,
           "pda": {
@@ -76,7 +76,7 @@
         {
           "name": "token_account",
           "docs": [
-            "The token account to burn from"
+            "The token account to burn from (Token-2022)"
           ],
           "writable": true,
           "pda": {
@@ -86,41 +86,8 @@
                 "path": "owner"
               },
               {
-                "kind": "const",
-                "value": [
-                  6,
-                  221,
-                  246,
-                  225,
-                  215,
-                  101,
-                  161,
-                  147,
-                  217,
-                  203,
-                  225,
-                  70,
-                  206,
-                  235,
-                  121,
-                  172,
-                  28,
-                  180,
-                  133,
-                  237,
-                  95,
-                  91,
-                  55,
-                  145,
-                  58,
-                  140,
-                  245,
-                  133,
-                  126,
-                  255,
-                  0,
-                  169
-                ]
+                "kind": "account",
+                "path": "token_program"
               },
               {
                 "kind": "account",
@@ -168,7 +135,7 @@
         },
         {
           "name": "token_program",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
         }
       ],
       "args": [
@@ -267,10 +234,178 @@
       ]
     },
     {
+      "name": "force_burn",
+      "docs": [
+        "Force burn tokens from any account using Permanent Delegate",
+        "Only the admin can call this instruction - used for compliance"
+      ],
+      "discriminator": [
+        238,
+        177,
+        217,
+        123,
+        137,
+        49,
+        129,
+        221
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "Only the admin can force burn"
+          ],
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "The stablecoin mint (Token-2022)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_account",
+          "docs": [
+            "The token account to burn from (can be any account due to Permanent Delegate)"
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "force_transfer",
+      "docs": [
+        "Force transfer tokens from any account using Permanent Delegate",
+        "Only the admin can call this instruction - used for compliance"
+      ],
+      "discriminator": [
+        179,
+        38,
+        130,
+        121,
+        202,
+        8,
+        199,
+        21
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "Only the admin can force transfer"
+          ],
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "The stablecoin mint (Token-2022)"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "from_token_account",
+          "docs": [
+            "The token account to transfer from (can be any account due to Permanent Delegate)"
+          ],
+          "writable": true
+        },
+        {
+          "name": "to_token_account",
+          "docs": [
+            "The token account to transfer to"
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "initialize",
       "docs": [
-        "Initialize the stablecoin mint and config",
-        "This creates a new token mint with the program PDA as the mint authority"
+        "Initialize the stablecoin mint and config with Token-2022 extensions",
+        "Creates a mint with: DefaultAccountState, PermanentDelegate"
       ],
       "discriminator": [
         175,
@@ -313,8 +448,7 @@
         {
           "name": "mint",
           "docs": [
-            "The stablecoin mint",
-            "The config PDA is set as both mint authority and freeze authority"
+            "The stablecoin mint - Token-2022 with extensions"
           ],
           "writable": true,
           "pda": {
@@ -333,14 +467,27 @@
         },
         {
           "name": "token_program",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
         },
         {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
         }
       ],
-      "args": []
+      "args": [
+        {
+          "name": "_name",
+          "type": "string"
+        },
+        {
+          "name": "_symbol",
+          "type": "string"
+        },
+        {
+          "name": "_uri",
+          "type": "string"
+        }
+      ]
     },
     {
       "name": "mint_tokens",
@@ -418,7 +565,7 @@
         {
           "name": "mint",
           "docs": [
-            "The stablecoin mint"
+            "The stablecoin mint (Token-2022)"
           ],
           "writable": true,
           "pda": {
@@ -438,7 +585,7 @@
         {
           "name": "destination",
           "docs": [
-            "The destination token account to mint to"
+            "The destination token account to mint to (Token-2022)"
           ],
           "writable": true,
           "pda": {
@@ -448,41 +595,8 @@
                 "path": "destination_owner"
               },
               {
-                "kind": "const",
-                "value": [
-                  6,
-                  221,
-                  246,
-                  225,
-                  215,
-                  101,
-                  161,
-                  147,
-                  217,
-                  203,
-                  225,
-                  70,
-                  206,
-                  235,
-                  121,
-                  172,
-                  28,
-                  180,
-                  133,
-                  237,
-                  95,
-                  91,
-                  55,
-                  145,
-                  58,
-                  140,
-                  245,
-                  133,
-                  126,
-                  255,
-                  0,
-                  169
-                ]
+                "kind": "account",
+                "path": "token_program"
               },
               {
                 "kind": "account",
@@ -533,7 +647,7 @@
         },
         {
           "name": "token_program",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
         },
         {
           "name": "associated_token_program",

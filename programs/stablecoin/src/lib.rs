@@ -1,8 +1,19 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::program::invoke_signed;
 use anchor_spl::{
     associated_token::AssociatedToken,
-    token_2022::{Token2022, mint_to, burn, MintTo, Burn},
-    token_interface::{Mint, TokenAccount},
+    token_2022::Token2022,
+    token_interface::{
+        Mint, TokenAccount,
+        mint_to, burn, transfer_checked,
+        MintTo, Burn, TransferChecked,
+    },
+};
+// anchor-spl 1.0 re-exports the Token-2022 interface crate as `spl_token_2022`
+use anchor_spl::token_2022::spl_token_2022::{
+    self,
+    extension::ExtensionType,
+    state::AccountState,
 };
 
 declare_id!("rYXfi25x9JMgau82aGMJMVUokq7JzueqehiJUmwR97Q");
@@ -11,16 +22,95 @@ declare_id!("rYXfi25x9JMgau82aGMJMVUokq7JzueqehiJUmwR97Q");
 pub mod stablecoin {
     use super::*;
 
-    /// Initialize the stablecoin mint and config
-    /// This creates a new Token-2022 mint with the program PDA as the mint authority
-    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
+    /// Initialize the stablecoin mint and config with Token-2022 extensions
+    /// Creates a mint with: DefaultAccountState, PermanentDelegate
+    pub fn initialize(
+        ctx: Context<Initialize>,
+        _name: String,
+        _symbol: String,
+        _uri: String,
+    ) -> Result<()> {
+        // 1. Set up Config account
         let config = &mut ctx.accounts.config;
         config.admin = ctx.accounts.admin.key();
-        config.mint = ctx.accounts.mint.key();
-        config.paused = false;
         config.bump = ctx.bumps.config;
         config.mint_bump = ctx.bumps.mint;
+        config.mint = ctx.accounts.mint.key();
+        config.paused = false;
 
+        let mint_key = ctx.accounts.mint.key();
+        let config_key = ctx.accounts.config.key();
+        let token_program_id = ctx.accounts.token_program.key();
+
+        // Signer seeds for mint PDA
+        let mint_seeds: &[&[&[u8]]] = &[&[b"mint", &[ctx.bumps.mint]]];
+
+        // 2. Calculate space for mint with extensions
+        let extension_types = vec![
+            ExtensionType::DefaultAccountState,
+            ExtensionType::PermanentDelegate,
+        ];
+
+        // Get space for mint with extensions
+        let total_space = ExtensionType::try_calculate_account_len::<spl_token_2022::state::Mint>(
+            &extension_types,
+        )
+        .unwrap();
+
+        // 3. Create the mint account
+        let lamports = Rent::get()?.minimum_balance(total_space);
+
+        invoke_signed(
+            &anchor_lang::solana_program::system_instruction::create_account(
+                &ctx.accounts.admin.key(),
+                &mint_key,
+                lamports,
+                total_space as u64,
+                &token_program_id,
+            ),
+            &[
+                ctx.accounts.admin.to_account_info(),
+                ctx.accounts.mint.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
+            mint_seeds,
+        )?;
+
+        // 4. Initialize PermanentDelegate extension (Config PDA as delegate)
+        invoke_signed(
+            &spl_token_2022::instruction::initialize_permanent_delegate(
+                &token_program_id,
+                &mint_key,
+                &config_key, // permanent delegate
+            )?,
+            &[ctx.accounts.mint.to_account_info()],
+            mint_seeds,
+        )?;
+
+        // 5. Initialize DefaultAccountState extension (Initialized = unfrozen)
+        invoke_signed(
+            &spl_token_2022::extension::default_account_state::instruction::initialize_default_account_state(
+                &token_program_id,
+                &mint_key,
+                &AccountState::Initialized, // Accounts start unfrozen
+            )?,
+            &[ctx.accounts.mint.to_account_info()],
+            mint_seeds,
+        )?;
+
+        invoke_signed(
+            &spl_token_2022::instruction::initialize_mint2(
+                &token_program_id,
+                &mint_key,
+                &config_key,       // mint authority
+                Some(&config_key), // freeze authority
+                6,                 // decimals (USDC-style)
+            )?,
+            &[ctx.accounts.mint.to_account_info()],
+            mint_seeds,
+        )?;
+
+        msg!("Initialized Token-2022 stablecoin with extensions");
         Ok(())
     }
 
@@ -74,10 +164,10 @@ pub mod stablecoin {
         // Create the signer seeds for the mint authority PDA
         let signer_seeds: &[&[&[u8]]] = &[&[b"config", &[config.bump]]];
 
-        // Mint tokens to the destination account via Token-2022
+        // Mint tokens to the destination account
         mint_to(
             CpiContext::new_with_signer(
-                anchor_spl::token_2022::ID,
+                ctx.accounts.token_program.key(),
                 MintTo {
                     mint: ctx.accounts.mint.to_account_info(),
                     to: ctx.accounts.destination.to_account_info(),
@@ -99,7 +189,7 @@ pub mod stablecoin {
     pub fn burn_tokens(ctx: Context<BurnTokens>, amount: u64) -> Result<()> {
         burn(
             CpiContext::new(
-                anchor_spl::token_2022::ID,
+                ctx.accounts.token_program.key(),
                 Burn {
                     mint: ctx.accounts.mint.to_account_info(),
                     from: ctx.accounts.token_account.to_account_info(),
@@ -129,6 +219,60 @@ pub mod stablecoin {
         msg!("Stablecoin unpaused");
         Ok(())
     }
+
+    /// Force burn tokens from any account using Permanent Delegate
+    /// Only the admin can call this instruction - used for compliance
+    pub fn force_burn(ctx: Context<ForceBurn>, amount: u64) -> Result<()> {
+        let config = &ctx.accounts.config;
+        let config_seeds: &[&[&[u8]]] = &[&[b"config", &[config.bump]]];
+
+        // Use the permanent delegate authority to burn from any account
+        burn(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.key(),
+                Burn {
+                    mint: ctx.accounts.mint.to_account_info(),
+                    from: ctx.accounts.token_account.to_account_info(),
+                    authority: ctx.accounts.config.to_account_info(),
+                },
+                config_seeds,
+            ),
+            amount,
+        )?;
+
+        msg!("Force burned {} tokens from {}", amount, ctx.accounts.token_account.key());
+        Ok(())
+    }
+
+    /// Force transfer tokens from any account using Permanent Delegate
+    /// Only the admin can call this instruction - used for compliance
+    pub fn force_transfer(ctx: Context<ForceTransfer>, amount: u64) -> Result<()> {
+        let config = &ctx.accounts.config;
+        let config_seeds: &[&[&[u8]]] = &[&[b"config", &[config.bump]]];
+
+        // Use the permanent delegate authority to transfer from any account
+        transfer_checked(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.key(),
+                TransferChecked {
+                    from: ctx.accounts.from_token_account.to_account_info(),
+                    mint: ctx.accounts.mint.to_account_info(),
+                    to: ctx.accounts.to_token_account.to_account_info(),
+                    authority: ctx.accounts.config.to_account_info(),
+                },
+                config_seeds,
+            ),
+            amount,
+            ctx.accounts.mint.decimals,
+        )?;
+
+        msg!("Force transferred {} tokens from {} to {}",
+            amount,
+            ctx.accounts.from_token_account.key(),
+            ctx.accounts.to_token_account.key()
+        );
+        Ok(())
+    }
 }
 
 // ============================================================================
@@ -139,16 +283,16 @@ pub mod stablecoin {
 #[account]
 #[derive(InitSpace)]
 pub struct Config {
-    /// The admin who can configure minters
-    pub admin: Pubkey,
+    /// The admin who can configure minters and blacklist accounts
+    pub admin: Pubkey,      // 32 bytes
     /// The mint address of the stablecoin
-    pub mint: Pubkey,
+    pub mint: Pubkey,       // 32 bytes
     /// Whether minting is paused
-    pub paused: bool,
+    pub paused: bool,       // 1 byte
     /// Bump seed for the config PDA
-    pub bump: u8,
+    pub bump: u8,           // 1 byte
     /// Bump seed for the mint PDA
-    pub mint_bump: u8,
+    pub mint_bump: u8,      // 1 byte
 }
 
 /// Minter configuration account
@@ -173,6 +317,7 @@ pub struct MinterConfig {
 // ============================================================================
 
 #[derive(Accounts)]
+#[instruction(name: String, symbol: String, uri: String)]
 pub struct Initialize<'info> {
     #[account(mut)]
     pub admin: Signer<'info>,
@@ -187,18 +332,14 @@ pub struct Initialize<'info> {
     )]
     pub config: Account<'info, Config>,
 
-    /// The Token-2022 stablecoin mint
-    /// The config PDA is set as both mint authority and freeze authority
+    /// The stablecoin mint - Token-2022 with extensions
+    /// CHECK: Created and initialized via CPI in the instruction
     #[account(
-        init,
-        payer = admin,
-        mint::decimals = 6,
-        mint::authority = config,
-        mint::freeze_authority = config,
+        mut,
         seeds = [b"mint"],
         bump
     )]
-    pub mint: InterfaceAccount<'info, Mint>,
+    pub mint: UncheckedAccount<'info>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
@@ -287,7 +428,7 @@ pub struct MintTokens<'info> {
     )]
     pub minter_config: Account<'info, MinterConfig>,
 
-    /// The Token-2022 stablecoin mint
+    /// The stablecoin mint (Token-2022)
     #[account(
         mut,
         seeds = [b"mint"],
@@ -295,7 +436,7 @@ pub struct MintTokens<'info> {
     )]
     pub mint: InterfaceAccount<'info, Mint>,
 
-    /// The destination Token-2022 token account (ATA) to mint to
+    /// The destination token account to mint to (Token-2022)
     #[account(
         init_if_needed,
         payer = minter,
@@ -325,7 +466,7 @@ pub struct BurnTokens<'info> {
     )]
     pub config: Account<'info, Config>,
 
-    /// The Token-2022 stablecoin mint
+    /// The stablecoin mint (Token-2022)
     #[account(
         mut,
         seeds = [b"mint"],
@@ -333,7 +474,7 @@ pub struct BurnTokens<'info> {
     )]
     pub mint: InterfaceAccount<'info, Mint>,
 
-    /// The Token-2022 token account to burn from
+    /// The token account to burn from (Token-2022)
     #[account(
         mut,
         associated_token::mint = mint,
@@ -375,6 +516,79 @@ pub struct Unpause<'info> {
         bump = config.bump
     )]
     pub config: Account<'info, Config>,
+}
+
+#[derive(Accounts)]
+pub struct ForceBurn<'info> {
+    /// Only the admin can force burn
+    #[account(
+        constraint = admin.key() == config.admin @ StablecoinError::Unauthorized
+    )]
+    pub admin: Signer<'info>,
+
+    #[account(
+        seeds = [b"config"],
+        bump = config.bump
+    )]
+    pub config: Account<'info, Config>,
+
+    /// The stablecoin mint (Token-2022)
+    #[account(
+        mut,
+        seeds = [b"mint"],
+        bump = config.mint_bump
+    )]
+    pub mint: InterfaceAccount<'info, Mint>,
+
+    /// The token account to burn from (can be any account due to Permanent Delegate)
+    #[account(
+        mut,
+        token::mint = mint,
+        token::token_program = token_program,
+    )]
+    pub token_account: InterfaceAccount<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token2022>,
+}
+
+#[derive(Accounts)]
+pub struct ForceTransfer<'info> {
+    /// Only the admin can force transfer
+    #[account(
+        constraint = admin.key() == config.admin @ StablecoinError::Unauthorized
+    )]
+    pub admin: Signer<'info>,
+
+    #[account(
+        seeds = [b"config"],
+        bump = config.bump
+    )]
+    pub config: Account<'info, Config>,
+
+    /// The stablecoin mint (Token-2022)
+    #[account(
+        seeds = [b"mint"],
+        bump = config.mint_bump
+    )]
+    pub mint: InterfaceAccount<'info, Mint>,
+
+    /// The token account to transfer from (can be any account due to Permanent Delegate)
+    #[account(
+        mut,
+        token::mint = mint,
+        token::token_program = token_program,
+    )]
+    pub from_token_account: InterfaceAccount<'info, TokenAccount>,
+
+    /// The token account to transfer to
+    #[account(
+        mut,
+        token::mint = mint,
+        token::token_program = token_program,
+    )]
+    pub to_token_account: InterfaceAccount<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token2022>,
 }
 
 // ============================================================================

@@ -78,7 +78,11 @@ fn test_initialize() {
             token_program: TOKEN_PROGRAM_ID,
             system_program: SYSTEM_PROGRAM_ID,
         })
-        .args(client::args::Initialize {})
+        .args(client::args::Initialize {
+            _name: "Test USD".to_string(),
+            _symbol: "TUSD".to_string(),
+            _uri: "https://example.com/tusd.json".to_string(),
+        })
         .instruction()
         .unwrap();
 
@@ -108,7 +112,11 @@ fn test_initialize_twice_fails() {
             token_program: TOKEN_PROGRAM_ID,
             system_program: SYSTEM_PROGRAM_ID,
         })
-        .args(client::args::Initialize {})
+        .args(client::args::Initialize {
+            _name: "Test USD".to_string(),
+            _symbol: "TUSD".to_string(),
+            _uri: "https://example.com/tusd.json".to_string(),
+        })
         .instruction()
         .unwrap();
 
@@ -127,7 +135,11 @@ fn test_initialize_twice_fails() {
             token_program: TOKEN_PROGRAM_ID,
             system_program: SYSTEM_PROGRAM_ID,
         })
-        .args(client::args::Initialize {})
+        .args(client::args::Initialize {
+            _name: "Test USD".to_string(),
+            _symbol: "TUSD".to_string(),
+            _uri: "https://example.com/tusd.json".to_string(),
+        })
         .instruction()
         .unwrap();
 
@@ -155,7 +167,11 @@ fn initialize_program(ctx: &mut anchor_litesvm::AnchorContext, admin: &Keypair) 
             token_program: TOKEN_PROGRAM_ID,
             system_program: SYSTEM_PROGRAM_ID,
         })
-        .args(client::args::Initialize {})
+        .args(client::args::Initialize {
+            _name: "Test USD".to_string(),
+            _symbol: "TUSD".to_string(),
+            _uri: "https://example.com/tusd.json".to_string(),
+        })
         .instruction()
         .unwrap();
 
@@ -839,6 +855,223 @@ fn test_mint_after_unpause() {
         get_token_balance(&ctx, &destination_ata),
         mint_amount,
         "Destination token balance after unpause mismatch"
+    );
+}
+
+// ============================================================================
+// Force Burn / Force Transfer Tests (Permanent Delegate)
+// ============================================================================
+
+fn force_burn_ix(
+    ctx: &anchor_litesvm::AnchorContext,
+    admin: &Pubkey,
+    token_account: &Pubkey,
+    amount: u64,
+) -> anchor_lang::solana_program::instruction::Instruction {
+    ctx.program()
+        .accounts(client::accounts::ForceBurn {
+            admin: *admin,
+            config: get_config_pda(),
+            mint: get_mint_pda(),
+            token_account: *token_account,
+            token_program: TOKEN_PROGRAM_ID,
+        })
+        .args(client::args::ForceBurn { amount })
+        .instruction()
+        .unwrap()
+}
+
+fn force_transfer_ix(
+    ctx: &anchor_litesvm::AnchorContext,
+    admin: &Pubkey,
+    from_token_account: &Pubkey,
+    to_token_account: &Pubkey,
+    amount: u64,
+) -> anchor_lang::solana_program::instruction::Instruction {
+    ctx.program()
+        .accounts(client::accounts::ForceTransfer {
+            admin: *admin,
+            config: get_config_pda(),
+            mint: get_mint_pda(),
+            from_token_account: *from_token_account,
+            to_token_account: *to_token_account,
+            token_program: TOKEN_PROGRAM_ID,
+        })
+        .args(client::args::ForceTransfer { amount })
+        .instruction()
+        .unwrap()
+}
+
+#[test]
+fn test_force_burn() {
+    let mut ctx = setup_ctx();
+
+    let admin = ctx.svm.create_funded_account(10_000_000_000).unwrap();
+    let minter = ctx.svm.create_funded_account(10_000_000_000).unwrap();
+    let user = Keypair::new();
+
+    initialize_program(&mut ctx, &admin);
+    configure_minter(&mut ctx, &admin, &minter.pubkey(), 1_000_000_000);
+    mint_tokens(&mut ctx, &minter, &user.pubkey(), 100_000_000);
+
+    let user_ata = get_ata(&user.pubkey(), &get_mint_pda());
+
+    // Admin burns from the user's account without the user's signature
+    let ix = force_burn_ix(&ctx, &admin.pubkey(), &user_ata, 30_000_000);
+    ctx.execute_instruction(ix, &[&admin])
+        .unwrap()
+        .assert_success();
+
+    assert_eq!(
+        get_token_balance(&ctx, &user_ata),
+        70_000_000,
+        "User token balance after force burn mismatch"
+    );
+}
+
+#[test]
+fn test_force_burn_unauthorized() {
+    let mut ctx = setup_ctx();
+
+    let admin = ctx.svm.create_funded_account(10_000_000_000).unwrap();
+    let minter = ctx.svm.create_funded_account(10_000_000_000).unwrap();
+    let attacker = ctx.svm.create_funded_account(10_000_000_000).unwrap();
+    let user = Keypair::new();
+
+    initialize_program(&mut ctx, &admin);
+    configure_minter(&mut ctx, &admin, &minter.pubkey(), 1_000_000_000);
+    mint_tokens(&mut ctx, &minter, &user.pubkey(), 100_000_000);
+
+    let user_ata = get_ata(&user.pubkey(), &get_mint_pda());
+
+    let ix = force_burn_ix(&ctx, &attacker.pubkey(), &user_ata, 30_000_000);
+    let result = ctx.execute_instruction(ix, &[&attacker]);
+    assert!(
+        result.is_err() || !result.unwrap().is_success(),
+        "Unauthorized force burn should fail"
+    );
+
+    assert_eq!(
+        get_token_balance(&ctx, &user_ata),
+        100_000_000,
+        "Balance should be unchanged after failed force burn"
+    );
+}
+
+#[test]
+fn test_force_burn_more_than_balance() {
+    let mut ctx = setup_ctx();
+
+    let admin = ctx.svm.create_funded_account(10_000_000_000).unwrap();
+    let minter = ctx.svm.create_funded_account(10_000_000_000).unwrap();
+    let user = Keypair::new();
+
+    initialize_program(&mut ctx, &admin);
+    configure_minter(&mut ctx, &admin, &minter.pubkey(), 1_000_000_000);
+    mint_tokens(&mut ctx, &minter, &user.pubkey(), 100_000_000);
+
+    let user_ata = get_ata(&user.pubkey(), &get_mint_pda());
+
+    let ix = force_burn_ix(&ctx, &admin.pubkey(), &user_ata, 200_000_000);
+    let result = ctx.execute_instruction(ix, &[&admin]);
+    assert!(
+        result.is_err() || !result.unwrap().is_success(),
+        "Force burn more than balance should fail"
+    );
+}
+
+#[test]
+fn test_force_transfer() {
+    let mut ctx = setup_ctx();
+
+    let admin = ctx.svm.create_funded_account(10_000_000_000).unwrap();
+    let minter = ctx.svm.create_funded_account(10_000_000_000).unwrap();
+    let user1 = Keypair::new();
+    let user2 = Keypair::new();
+
+    initialize_program(&mut ctx, &admin);
+    configure_minter(&mut ctx, &admin, &minter.pubkey(), 1_000_000_000);
+    // Mint to both users so both token accounts exist
+    mint_tokens(&mut ctx, &minter, &user1.pubkey(), 100_000_000);
+    mint_tokens(&mut ctx, &minter, &user2.pubkey(), 10_000_000);
+
+    let mint_pda = get_mint_pda();
+    let user1_ata = get_ata(&user1.pubkey(), &mint_pda);
+    let user2_ata = get_ata(&user2.pubkey(), &mint_pda);
+
+    // Admin moves tokens from user1 to user2 without user1's signature
+    let ix = force_transfer_ix(&ctx, &admin.pubkey(), &user1_ata, &user2_ata, 40_000_000);
+    ctx.execute_instruction(ix, &[&admin])
+        .unwrap()
+        .assert_success();
+
+    assert_eq!(
+        get_token_balance(&ctx, &user1_ata),
+        60_000_000,
+        "Source balance after force transfer mismatch"
+    );
+    assert_eq!(
+        get_token_balance(&ctx, &user2_ata),
+        50_000_000,
+        "Destination balance after force transfer mismatch"
+    );
+}
+
+#[test]
+fn test_force_transfer_unauthorized() {
+    let mut ctx = setup_ctx();
+
+    let admin = ctx.svm.create_funded_account(10_000_000_000).unwrap();
+    let minter = ctx.svm.create_funded_account(10_000_000_000).unwrap();
+    let attacker = ctx.svm.create_funded_account(10_000_000_000).unwrap();
+    let victim = Keypair::new();
+
+    initialize_program(&mut ctx, &admin);
+    configure_minter(&mut ctx, &admin, &minter.pubkey(), 1_000_000_000);
+    mint_tokens(&mut ctx, &minter, &victim.pubkey(), 100_000_000);
+    mint_tokens(&mut ctx, &minter, &attacker.pubkey(), 1);
+
+    let mint_pda = get_mint_pda();
+    let victim_ata = get_ata(&victim.pubkey(), &mint_pda);
+    let attacker_ata = get_ata(&attacker.pubkey(), &mint_pda);
+
+    let ix = force_transfer_ix(&ctx, &attacker.pubkey(), &victim_ata, &attacker_ata, 100_000_000);
+    let result = ctx.execute_instruction(ix, &[&attacker]);
+    assert!(
+        result.is_err() || !result.unwrap().is_success(),
+        "Unauthorized force transfer should fail"
+    );
+
+    assert_eq!(
+        get_token_balance(&ctx, &victim_ata),
+        100_000_000,
+        "Victim balance should be unchanged after failed force transfer"
+    );
+}
+
+#[test]
+fn test_force_transfer_more_than_balance() {
+    let mut ctx = setup_ctx();
+
+    let admin = ctx.svm.create_funded_account(10_000_000_000).unwrap();
+    let minter = ctx.svm.create_funded_account(10_000_000_000).unwrap();
+    let user1 = Keypair::new();
+    let user2 = Keypair::new();
+
+    initialize_program(&mut ctx, &admin);
+    configure_minter(&mut ctx, &admin, &minter.pubkey(), 1_000_000_000);
+    mint_tokens(&mut ctx, &minter, &user1.pubkey(), 100_000_000);
+    mint_tokens(&mut ctx, &minter, &user2.pubkey(), 10_000_000);
+
+    let mint_pda = get_mint_pda();
+    let user1_ata = get_ata(&user1.pubkey(), &mint_pda);
+    let user2_ata = get_ata(&user2.pubkey(), &mint_pda);
+
+    let ix = force_transfer_ix(&ctx, &admin.pubkey(), &user1_ata, &user2_ata, 200_000_000);
+    let result = ctx.execute_instruction(ix, &[&admin]);
+    assert!(
+        result.is_err() || !result.unwrap().is_success(),
+        "Force transfer more than balance should fail"
     );
 }
 
