@@ -1,8 +1,11 @@
 use anchor_litesvm::{AnchorLiteSVM, Keypair, Pubkey, Signer};
 use litesvm_utils::{AssertionHelpers, TestHelpers};
 
+// Bring `anchor_lang` into scope: anchor 1.0.0's `declare_program!` expands to `use super::anchor_lang`.
+use anchor_lang::prelude::*;
+
 // Declare the program to generate client types
-anchor_lang::declare_program!(stablecoin);
+declare_program!(stablecoin);
 use self::stablecoin::{client, ID as PROGRAM_ID};
 
 // Program IDs — Token-2022 (Token Extensions)
